@@ -1,7 +1,6 @@
 .local
 .idea
-WebpageMonitorBackend\__pycache__\*
-WebpageMonitorBackend\pages\__pycache__\*
+**/__pycache__/
 /.gitcommit_state.json
 /bump_state_day.py
 /gitcommit.py
