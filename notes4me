@@ -1,4 +1,0 @@
-CORS not a problem, what now?
-add new view for site monitoring if url correct
-if problem with site (but url correct) give error (or ask if user wants to monitor anyway for uptime)
-don't know how to do users in django but will figure it out
