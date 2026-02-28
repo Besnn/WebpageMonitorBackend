@@ -11,10 +11,34 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from backend/.env using stdlib only (no extra deps).
+# Does not override variables that are already set in the environment.
+def _load_dotenv(path):
+    try:
+        with open(path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line or _line.startswith('#') or '=' not in _line:
+                    continue
+                _key, _, _val = _line.partition('=')
+                _key = _key.strip()
+                _val = _val.strip().strip('"').strip("'")
+                os.environ.setdefault(_key, _val)
+    except FileNotFoundError:
+        pass
+
+_load_dotenv(BASE_DIR / ".env")
+
+# Development ports and defaults
+DJANGO_DEV_SERVER_PORT = 8000
+FRONTEND_DEV_SERVER_PORT = 5173
+POSTGRES_DEFAULT_PORT = "5432"
+SMTP_DEFAULT_DEV_PORT = "25"
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
@@ -26,7 +50,8 @@ SECRET_KEY = "django-insecure-y!b1$Z3#^-#v@d_q&j*z&b^p@b*t*c*w*x*y*z*a*b*c*d*e*f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# Allow local development hosts.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
 
 
 # Application definition
@@ -39,7 +64,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "corsheaders",
-    "WebpageMonitorBackend.authentication",
+    "pages",
+    "authentication",
 ]
 
 MIDDLEWARE = [
@@ -56,10 +82,14 @@ MIDDLEWARE = [
 # Whitelist the origins that are allowed to make cross-site HTTP requests.
 # This is typically your frontend's address.
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:8000", # Example for a React app
-    "http://localhost:5173", # Example for a Vue app
-    "http://127.0.0.1:5500", # Example for VS Code Live Server
+    f"http://localhost:{DJANGO_DEV_SERVER_PORT}",
+    f"http://127.0.0.1:{DJANGO_DEV_SERVER_PORT}",
+    f"http://localhost:{FRONTEND_DEV_SERVER_PORT}",  # Vite dev server
+    f"http://127.0.0.1:{FRONTEND_DEV_SERVER_PORT}",
 ]
+
+# Allow cookies/authorization headers to be included in cross-site requests.
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = "WebpageMonitorBackend.urls"
 
@@ -92,7 +122,7 @@ DATABASES = {
         "USER": "postgres",
         "PASSWORD": "TMP_PASSWORD_",
         "HOST": "localhost",
-        "PORT": "5432",
+        "PORT": POSTGRES_DEFAULT_PORT,
     }
 }
 
@@ -133,7 +163,144 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# Media files (user-uploaded / generated artefacts)
+MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = "/media/"
+
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+RECENT_CHECKS_LIMIT = 10
+
+
+# ---------------------------------------------------------------------------
+# Logging — show INFO from app modules in the console
+# ---------------------------------------------------------------------------
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[{asctime}] {levelname} {name}: {message}",
+            "style": "{",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        # App-level loggers — INFO and above
+        "pages": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "authentication": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Django's own request/server logger
+        "django": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}
+
+# Email configuration
+# Defaults to the SMTP backend pointed at localhost:1025 (smtp4dev / MailHog / etc).
+# Override any of these via environment variables.
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "django.core.mail.backends.smtp.EmailBackend",
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "localhost")
+# smtp4dev default: 25   MailHog default: 1025   Papercut default: 25
+# Override with the EMAIL_PORT environment variable to match your local tool.
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", SMTP_DEFAULT_DEV_PORT))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "false").lower() in {"1", "true", "yes"}
+EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes"}
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "webmon@localhost")
+SERVER_EMAIL = os.getenv("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
+# Base URL used in notification emails to build absolute links to screenshots
+SITE_BASE_URL = os.getenv("SITE_BASE_URL", f"http://localhost:{DJANGO_DEV_SERVER_PORT}")
+
+# ---------------------------------------------------------------------------
+# Screenshot storage — local disk (default) or S3
+# ---------------------------------------------------------------------------
+# Set USE_S3_STORAGE=true (env var) to store screenshots in an S3 bucket
+# instead of the local filesystem.  All other S3_* variables are required
+# when S3 is enabled.
+#
+# Required env vars when USE_S3_STORAGE=true:
+#   S3_BUCKET_NAME        e.g. my-webmon-screenshots
+#   S3_REGION_NAME        e.g. eu-west-1
+#   AWS_ACCESS_KEY_ID     IAM key id
+#   AWS_SECRET_ACCESS_KEY IAM secret
+#
+# Optional:
+#   S3_ENDPOINT_URL       custom endpoint (MinIO, LocalStack, etc.)
+#   S3_PRESIGN_EXPIRY     seconds for pre-signed GET URLs (default: 3600)
+#   S3_KEY_PREFIX         object key prefix, e.g. "screenshots" (default: "screenshots")
+#   S3_USE_PATH_STYLE     "true" for path-style URLs (needed for MinIO)
+
+USE_S3_STORAGE        = os.getenv("USE_S3_STORAGE", "false").lower() in {"1", "true", "yes"}
+
+S3_BUCKET_NAME        = os.getenv("S3_BUCKET_NAME", "")
+S3_REGION_NAME        = os.getenv("S3_REGION_NAME", "us-east-1")
+S3_ENDPOINT_URL       = os.getenv("S3_ENDPOINT_URL", "")         # blank = AWS
+S3_PRESIGN_EXPIRY     = int(os.getenv("S3_PRESIGN_EXPIRY", "3600"))
+S3_KEY_PREFIX         = os.getenv("S3_KEY_PREFIX", "screenshots").rstrip("/")
+S3_USE_PATH_STYLE     = os.getenv("S3_USE_PATH_STYLE", "false").lower() in {"1", "true", "yes"}
+
+AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+
+# Screenshot artefacts directory (used only when USE_S3_STORAGE=false)
+SCREENSHOTS_DIR = BASE_DIR / "screenshots"
+
+# Maximum number of screenshots to retain per monitored page
+MAX_SCREENSHOTS_PER_PAGE = 30
+
+# ---------------------------------------------------------------------------
+# SeaweedFS S3-compatible storage
+# ---------------------------------------------------------------------------
+# Set USE_SEAWEEDFS_STORAGE=true to store screenshots in a local SeaweedFS
+# cluster instead of local disk or AWS S3.  SeaweedFS exposes an S3-compatible
+# API so this backend reuses the boto3 client under the hood, but it:
+#   • never generates pre-signed URLs (the bucket is private/internal);
+#     instead Django proxies the image through /api/screenshots/ as with
+#     local storage so the browser never talks to SeaweedFS directly.
+#   • always uses path-style addressing (required by SeaweedFS S3 gateway).
+#
+# Required env vars:
+#   SEAWEEDFS_ENDPOINT   e.g. http://localhost:8333
+#   SEAWEEDFS_BUCKET     e.g. screenshots
+#
+# Optional:
+#   SEAWEEDFS_ACCESS_KEY  (leave empty for anonymous / dev mode)
+#   SEAWEEDFS_SECRET_KEY  (leave empty for anonymous / dev mode)
+#   SEAWEEDFS_KEY_PREFIX  object-key prefix (default: "screenshots")
+#   SEAWEEDFS_REGION      region string sent to boto3 (default: "us-east-1")
+
+USE_SEAWEEDFS_STORAGE    = os.getenv("USE_SEAWEEDFS_STORAGE", "false").lower() in {"1", "true", "yes"}
+
+SEAWEEDFS_ENDPOINT       = os.getenv("SEAWEEDFS_ENDPOINT", "http://localhost:8333")
+SEAWEEDFS_BUCKET         = os.getenv("SEAWEEDFS_BUCKET", "screenshots")
+SEAWEEDFS_ACCESS_KEY     = os.getenv("SEAWEEDFS_ACCESS_KEY", "")
+SEAWEEDFS_SECRET_KEY     = os.getenv("SEAWEEDFS_SECRET_KEY", "")
+SEAWEEDFS_KEY_PREFIX     = os.getenv("SEAWEEDFS_KEY_PREFIX", "screenshots").rstrip("/")
+SEAWEEDFS_REGION         = os.getenv("SEAWEEDFS_REGION", "us-east-1")
+

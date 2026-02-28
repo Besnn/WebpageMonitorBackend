@@ -4,3 +4,4 @@
 /.gitcommit_state.json
 /bump_state_day.py
 /gitcommit.py
+/.venv/
